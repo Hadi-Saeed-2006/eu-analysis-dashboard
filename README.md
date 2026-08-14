@@ -15,7 +15,7 @@ The canonical dataset contains 162 rows: 27 countries × 6 years.
 
 Primary source: Eurostat.
 
-The project is designed so the datasets can be regenerated from Eurostat if a temporary Colab runtime is reset.
+The project includes an automated GitHub Actions pipeline that rebuilds the processed datasets from Eurostat and commits them to `data/processed/`.
 
 ## Run locally
 
@@ -26,4 +26,4 @@ streamlit run app.py
 
 ## Project status
 
-Current milestone: functional 4D Streamlit dashboard with validated Eurostat data-recovery pipeline.
+Current milestone: functional 4D Streamlit dashboard with automated Eurostat data-recovery and dataset-build pipeline.
