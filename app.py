@@ -65,24 +65,10 @@ def geo_id_key(geojson):
     return None
 
 
-def ensure_datasets():
-    """Build processed Eurostat datasets automatically when deploying fresh."""
-    if MASTER_FILE.exists() and INTELLIGENCE_FILE.exists():
-        return
-    try:
-        from scripts import rebuild_project
-        st.info("Preparing the EU analysis datasets from Eurostat. This may take a moment on first launch...")
-        # Import executes the repository's deterministic rebuild script.
-        _ = rebuild_project
-    except Exception as exc:
-        raise RuntimeError(f"Could not build the EU datasets automatically: {exc}") from exc
-
-
 try:
-    ensure_datasets()
     master, intelligence = load_data()
-except Exception as exc:
-    st.error(f"Dataset preparation failed: {exc}")
+except FileNotFoundError:
+    st.error("Dataset files are missing. Run scripts/rebuild_project.py first.")
     st.stop()
 
 # ============================================================
@@ -271,100 +257,176 @@ with rank2:
 st.header("📊 4D Economic Analytics")
 
 analytics_tab1, analytics_tab2, analytics_tab3, analytics_tab4 = st.tabs([
-    "⏳ Time", "🌍 Country", "💼 Opportunity", "⚠️ Risk & Resilience"
+    "⏳ Time",
+    "📈 Relationships",
+    "🌍 Country Comparison",
+    "🧠 Intelligence",
 ])
 
 with analytics_tab1:
-    st.subheader(f"Economic trajectory — {selected_country}")
-    time_fig = px.line(
+    st.subheader(f"{selected_country} — 2020–2025 Timeline")
+
+    timeline = country_data.set_index("year")[
+        ["gdp_growth_pct", "inflation_pct", "gdp_per_capita_pps"]
+    ]
+    st.line_chart(timeline)
+
+    st.dataframe(
         country_data,
-        x="year",
-        y=["gdp_growth_pct", "inflation_pct"],
-        markers=True,
-        labels={"value": "Percent", "variable": "Indicator"},
-        title="GDP Growth vs Inflation",
+        use_container_width=True,
+        hide_index=True,
     )
-    st.plotly_chart(time_fig, use_container_width=True)
 
 with analytics_tab2:
-    st.subheader("Country economic profile")
-    profile_cols = [
-        "growth_score", "prosperity_score", "price_stability_score",
-        "resilience_score", "economic_score"
-    ]
-    profile_long = pd.DataFrame({
-        "Indicator": profile_cols,
-        "Score": [float(profile[c]) for c in profile_cols],
+    st.subheader(f"Economic Relationships — {selected_year}")
+
+    scatter_metric = st.selectbox(
+        "Compare GDP growth against",
+        [
+            "inflation_pct",
+            "gdp_per_capita_pps",
+            "economic_score",
+            "opportunity_score",
+        ],
+        format_func=lambda x: {
+            "inflation_pct": "Inflation",
+            "gdp_per_capita_pps": "GDP per Capita PPS",
+            "economic_score": "Economic Score",
+            "opportunity_score": "Opportunity Score",
+        }[x],
+    )
+
+    fig_scatter = px.scatter(
+        map_data,
+        x=scatter_metric,
+        y="gdp_growth_pct",
+        size="gdp_per_capita_pps",
+        color="economic_score",
+        hover_name="country",
+        labels={
+            scatter_metric: scatter_metric.replace("_", " ").title(),
+            "gdp_growth_pct": "GDP growth %",
+            "economic_score": "Economic score",
+        },
+        color_continuous_scale="RdYlGn",
+        title="GDP Growth Relationship",
+    )
+    fig_scatter.update_layout(height=550)
+    st.plotly_chart(fig_scatter, use_container_width=True)
+
+with analytics_tab3:
+    st.subheader(f"Country Comparison — {selected_year}")
+
+    comparison_metric = st.selectbox(
+        "Ranking metric",
+        list(metric_options.keys()),
+        key="comparison_metric_v2",
+    )
+    comparison_column = metric_options[comparison_metric]
+
+    comparison = map_data[
+        ["country", comparison_column]
+    ].sort_values(comparison_column, ascending=False)
+
+    fig_bar = px.bar(
+        comparison,
+        x=comparison_column,
+        y="country",
+        orientation="h",
+        title=f"{comparison_metric} — {selected_year}",
+        labels={comparison_column: comparison_metric, "country": "Country"},
+    )
+    fig_bar.update_layout(height=800, yaxis={"categoryorder": "total ascending"})
+    st.plotly_chart(fig_bar, use_container_width=True)
+
+with analytics_tab4:
+    st.subheader(f"🧠 Intelligence Profile — {selected_country}")
+
+    i1, i2, i3, i4 = st.columns(4)
+    i1.metric("Economic Score", f"{profile['economic_score']:.1f}")
+    i2.metric("Opportunity", f"{profile['opportunity_score']:.1f}")
+    i3.metric("Risk", f"{profile['risk_score']:.1f}")
+    i4.metric("Resilience", f"{profile['resilience_score']:.1f}")
+
+    score_df = pd.DataFrame({
+        "Indicator": [
+            "Growth",
+            "Prosperity",
+            "Price Stability",
+            "Resilience",
+            "Opportunity",
+        ],
+        "Score": [
+            profile["growth_score"],
+            profile["prosperity_score"],
+            profile["price_stability_score"],
+            profile["resilience_score"],
+            profile["opportunity_score"],
+        ],
     })
-    radar = px.bar(
-        profile_long,
+
+    fig_score = px.bar(
+        score_df,
         x="Indicator",
         y="Score",
         range_y=[0, 100],
-        title=f"{selected_country} — Intelligence Profile",
+        title="Country Intelligence Components",
     )
-    st.plotly_chart(radar, use_container_width=True)
+    st.plotly_chart(fig_score, use_container_width=True)
 
-with analytics_tab3:
-    st.subheader("Opportunity landscape")
-    opp_fig = px.scatter(
-        intelligence,
-        x="prosperity_score",
-        y="growth_score",
-        size="opportunity_score",
-        hover_name="country",
-        color="opportunity_score",
-        labels={
-            "prosperity_score": "Prosperity score",
-            "growth_score": "Growth score",
-            "opportunity_score": "Opportunity score",
-        },
-        title="Growth vs Prosperity — Opportunity Mapping",
+    st.info(
+        "Economic Score combines growth, prosperity, price stability and resilience. "
+        "Opportunity and risk are separate intelligence dimensions derived from the same normalized indicators."
     )
-    st.plotly_chart(opp_fig, use_container_width=True)
-
-with analytics_tab4:
-    st.subheader("Risk vs resilience")
-    risk_fig = px.scatter(
-        intelligence,
-        x="risk_score",
-        y="resilience_score",
-        size="economic_score",
-        hover_name="country",
-        color="economic_score",
-        labels={
-            "risk_score": "Risk score",
-            "resilience_score": "Resilience score",
-            "economic_score": "Economic score",
-        },
-        title="Risk vs Resilience",
-    )
-    st.plotly_chart(risk_fig, use_container_width=True)
 
 # ============================================================
-# COUNTRY PROFILE
+# FULL RANKING TABLE
 # ============================================================
 
-st.header(f"🇪🇺 Country Intelligence Profile — {selected_country}")
+st.header("📋 Full EU Intelligence Ranking")
 
-p1, p2, p3, p4 = st.columns(4)
-p1.metric("Economic Score", f"{profile['economic_score']:.1f}")
-p2.metric("Opportunity", f"{profile['opportunity_score']:.1f}")
-p3.metric("Risk", f"{profile['risk_score']:.1f}")
-p4.metric("Resilience", f"{profile['resilience_score']:.1f}")
+ranking = intelligence[
+    [
+        "country",
+        "economic_score",
+        "opportunity_score",
+        "risk_score",
+        "resilience_score",
+        "economic_rank",
+        "opportunity_rank",
+        "risk_rank",
+    ]
+].sort_values("economic_rank")
 
 st.dataframe(
-    country_data[
-        ["year", "gdp_growth_pct", "gdp_per_capita_pps", "inflation_pct"]
-    ].rename(columns={
-        "year": "Year",
-        "gdp_growth_pct": "GDP Growth %",
-        "gdp_per_capita_pps": "GDP per Capita PPS",
-        "inflation_pct": "Inflation %",
-    }),
+    ranking,
     use_container_width=True,
     hide_index=True,
 )
+
+# ============================================================
+# DATA DOWNLOAD
+# ============================================================
+
+st.header("⬇️ Data & Project Information")
+
+d1, d2 = st.columns(2)
+
+with d1:
+    st.download_button(
+        "Download master dataset",
+        data=master.to_csv(index=False).encode("utf-8"),
+        file_name="eu_economic_master_2020_2025.csv",
+        mime="text/csv",
+    )
+
+with d2:
+    st.download_button(
+        "Download intelligence dataset",
+        data=intelligence.to_csv(index=False).encode("utf-8"),
+        file_name="country_economic_intelligence.csv",
+        mime="text/csv",
+    )
 
 # ============================================================
 # METHODOLOGY
@@ -373,26 +435,41 @@ st.dataframe(
 with st.expander("📚 Methodology & Data Sources"):
     st.markdown(
         """
-        **Coverage:** 27 EU Member States, annual observations from 2020–2025.
+### Data coverage
 
-        **Primary source:** Eurostat official statistics API.
+- 27 EU countries
+- 2020–2025
+- 162 country-year observations
+- GDP growth
+- GDP per capita in PPS
+- Annual HICP inflation
 
-        **Indicators:**
-        - Real GDP growth (%)
-        - GDP per capita in PPS (EU27=100)
-        - HICP inflation (%)
+### 4D framework
 
-        **Composite intelligence scores:**
-        - Growth score: min-max normalized average GDP growth.
-        - Prosperity score: min-max normalized average GDP per capita PPS.
-        - Price stability score: inverse min-max normalized average inflation.
-        - Resilience score: inverse min-max normalized GDP-growth volatility.
-        - Opportunity score = 40% growth + 35% prosperity + 25% price stability.
-        - Economic score = 30% growth + 25% prosperity + 20% price stability + 25% resilience.
-        - Risk score = 55% inverse growth + 45% inverse price stability.
+**Time** → six-year economic evolution  
+**Geography** → EU country-level spatial comparison  
+**Economy** → growth, prosperity and inflation  
+**Intelligence** → economic score, opportunity, risk and resilience
 
-        Scores are analytical constructs for comparative intelligence and are not official Eurostat measures.
+### Economic score
+
+The current model combines:
+
+- 30% growth
+- 25% prosperity
+- 20% price stability
+- 25% resilience
+
+The underlying indicators are normalized across the 27-country comparison set.
+
+### Source
+
+Economic observations are recovered from **Eurostat**. Geographic boundaries are supplied by **Eurostat GISCO**.
         """
     )
 
-st.caption("Built with Python, Pandas, Plotly, Requests and Streamlit. Data source: Eurostat.")
+st.divider()
+st.caption(
+    "EU 4D Economic Intelligence • 27 countries • 2020–2025 • "
+    "Eurostat data + Eurostat GISCO geography • Python • Pandas • Plotly • Streamlit"
+)
